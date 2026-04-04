@@ -232,10 +232,152 @@ For regression hunting: `git bisect run ./scripts/mem_bisect.sh 150` identifies 
 
 ---
 
-## 9. Recommended Next Steps
+---
 
-1. **Immediate**: Set `GOMEMLIMIT=150MiB` and `--pprof-server` on next Dolt restart
-2. **This week**: Implement the `membench` baseline test to establish measurement
-3. **First code change**: Make prolly node cache size configurable via env var (highest impact, lowest risk)
-4. **Then**: Profile with pprof under Gas Town load to identify remaining hot spots
-5. **Ongoing**: Integrate membench into CI to catch regressions
+## 9. Deep Analysis: GOMEMLIMIT
+
+### What It Does
+
+GOMEMLIMIT (Go 1.19+) sets a **soft limit** on total Go runtime memory (heap + stacks + GC metadata). It does not cap allocations — it changes GC scheduling. When heap approaches the limit, GC runs more aggressively and returns memory to the OS via `madvise(MADV_DONTNEED)`.
+
+### Interaction with GOGC
+
+Without GOMEMLIMIT, GOGC alone drives GC timing (GOGC=100 = GC at 2x live data). With GOMEMLIMIT, GC fires on **whichever trigger comes first**: the GOGC ratio or the memory limit approaching. This means GOMEMLIMIT can make GC run earlier than GOGC alone would dictate.
+
+### Safety Valve
+
+The GC CPU limiter caps GC CPU at ~50%. If a too-low GOMEMLIMIT would require more CPU, the runtime backs off and lets memory exceed the limit. This means a too-low value degrades throughput but **cannot freeze or OOM the process**.
+
+### Why It Matters for Dolt
+
+Without GOMEMLIMIT (Dolt's current state), the Go runtime holds onto freed heap pages after bursty workloads. Peak memory becomes the new RSS floor. For a long-running server with large caches, RSS appears bloated even when live data is small.
+
+**Critical nuance**: GOMEMLIMIT controls only Go heap, not mmap'd files. Dolt's ~65MB of mmap'd journal files are invisible to it. A GOMEMLIMIT of 150MiB targets the ~174MB Go heap, not the total 243MB RSS.
+
+### Industry Consensus
+
+GOMEMLIMIT is considered **best practice** for long-running Go services:
+- **CockroachDB**: Sets it programmatically based on `--cache` and `--max-sql-memory`
+- **Weaviate**: Calls it a "game changer" for reducing OOM in containers
+- **automemlimit** library (GitLab Runner, others): Auto-sets to 90% of cgroup limit
+
+### Dolt's Current State
+
+Zero references to `SetMemoryLimit`, `SetGCPercent`, `GOMEMLIMIT`, or `GOGC` anywhere in the Dolt codebase. No `--max-memory` flag exists. This is a gap.
+
+### Recommended Value for Gas Town
+
+`GOMEMLIMIT=150MiB` with `GOGC=100` (default). This targets the Go heap, leaves headroom for mmap, and the CPU limiter prevents thrashing. If we also shrink the prolly cache to 32MB, then `GOMEMLIMIT=100MiB` would be appropriate.
+
+---
+
+## 10. Deep Analysis: Prolly Node Cache
+
+### What Prolly Trees Are
+
+Prolly trees are content-addressed B-tree variants where chunk boundaries are determined by rolling hashes. Each **Node** is a flatbuffer message (4-16KB typical) containing key/value pairs. Trees are shallow: with ~50-200 branching factor, 1M rows needs only 3-4 levels. Every table, index, and schema map is a separate prolly tree.
+
+**Every row access traverses root-to-leaf**, and a cache miss means disk I/O through the ChunkStore (index lookup + decompression). Caching is performance-critical.
+
+### Cache Implementation
+
+The cache (`node_store.go:72`) is a **process-global singleton** shared across all databases, tables, and connections. It's a 256-stripe LRU — first byte of the hash selects the stripe, each stripe has its own mutex and LRU list. This design optimizes for concurrent access on large servers.
+
+### Why 256MB?
+
+No documented rationale exists — the constant has no comment, no linked PR discussion, no benchmark reference. It's a pragmatic default for Dolt's primary deployment target: dedicated database servers with gigabytes of RAM running sysbench/TPCC workloads on millions of rows. At 4-16KB per node, 256MB holds tens of thousands of nodes, covering the hot working set of several large tables.
+
+**For Gas Town**: 5 databases with a few hundred total rows. The entire prolly tree dataset is likely <5MB. We are reserving 256MB of address space for <5MB of useful data.
+
+### Impact of Shrinking
+
+| Size | Per-Stripe | Effect |
+|------|-----------|--------|
+| 8MB | 32KB (~2-8 nodes) | **Dangerous**: Interior nodes constantly evicted. Point lookups degrade 10-100x. |
+| 32MB | 128KB (~8-32 nodes) | **Safe for small workloads**: Holds entire Gas Town working set with room to spare. |
+| 64MB | 256KB | **Conservative**: Comfortable headroom for moderate growth. |
+| 256MB (current) | 1MB | **Production default**: Tuned for large datasets on dedicated servers. |
+
+### Upstream Acceptability: HIGH
+
+**Direct precedent exists**: `DOLT_COMMIT_CACHE_SIZE` in `go/libraries/doltcore/doltdb/doltdb.go` already follows the exact pattern — env var overriding a hardcoded cache size. The `dconfig/envvars.go` file defines ~30 `DOLT_*` env vars. A `DOLT_NODE_CACHE_SIZE` env var with 256MB default is backwards-compatible, zero-risk, and follows established conventions.
+
+---
+
+## 11. Upstream Acceptability Assessment
+
+Proposals ranked by likelihood of acceptance by Dolt maintainers:
+
+### Tier 1: Near-Certain Accept
+
+**(F) Make pprof easier to enable** — `--pprof-server` already exists. Adding a YAML config option is trivial, changes no defaults, benefits all operators.
+
+**(B) Make prolly node cache configurable** — Follows the `DOLT_COMMIT_CACHE_SIZE` pattern exactly. ~3 files touched. Default unchanged. Benefits all memory-constrained deployments (containers, multi-tenant, embedded).
+
+### Tier 2: Likely Accept
+
+**(A) GOMEMLIMIT support** — Users can already set it externally, but surfacing in config improves discoverability. Alternatively, importing `automemlimit` (one line) auto-detects cgroup limits. CockroachDB and others do this.
+
+### Tier 3: Needs Benchmarks
+
+**(C) Configurable memTable size** — Moderate risk since it affects write performance and flush behavior. The parameter threading already exists through store constructors. Maintainers will want benchmark proof.
+
+### Tier 4: Unlikely Accept
+
+**(E) membench test harness** — Useful but perceived as niche test infrastructure. Better maintained in a fork unless it catches real upstream regressions.
+
+**(D) Database consolidation** — Architectural change to Dolt's fundamental multi-database model. Wrong level of abstraction for this problem.
+
+### Best Form Factor
+
+**Environment variables** (`DOLT_*`) for cache sizes — matches ~30 existing env vars, requires no config schema changes, invisible to users who don't opt in. Server config YAML for pprof enablement.
+
+---
+
+## 12. Test Harness: First Cycle Results
+
+### Test Created
+
+`go/performance/membench/gastownbench_test.go` — a functional in-process benchmark that:
+- Creates a temp Dolt database
+- Initializes with `issues (id INT PRIMARY KEY, title TEXT, status TEXT)`
+- Inserts 100 rows, reads them back
+- Measures `runtime.MemStats` and `/proc/self/status` VmRSS at 5 phases
+
+### Run Command
+
+```bash
+cd go && go test -v -tags gms_pure_go -run TestGasTownMemory -timeout 120s ./performance/membench/
+```
+
+(`-tags gms_pure_go` required — this machine lacks `libicu-devel`)
+
+### Results
+
+| Phase | Heap Alloc (MB) | VmRSS (KB) |
+|-------|----------------|------------|
+| baseline | 10.4 | 57,884 |
+| after_init | 17.6 | 62,124 |
+| after_engine_create | 17.7 | 62,796 |
+| after_insert_100_rows | 17.9 | 66,532 |
+| after_select_all | 17.7 | 66,948 |
+
+**Delta**: +7.3MB heap, +9MB RSS for a complete init→insert→select cycle. Completed in 0.06s.
+
+### Key Observations
+
+1. **Repo initialization is the biggest memory event** (~7MB heap). Insert/select of 100 rows adds ~0.2MB.
+2. **The test runs in-process without a server** — the 256MB prolly cache is allocated lazily, so it doesn't show up in a short test. A multi-database server test would reveal the full cache impact.
+3. **Next iteration**: Extend to 5 databases with the full Gas Town schema to reproduce the production memory profile.
+
+---
+
+## 13. Recommended Next Steps
+
+1. **Immediate (no code, no restart)**: Document `GOMEMLIMIT=150MiB` as a Gas Town config recommendation
+2. **On next Dolt restart**: Add `--pprof-server` and `GOMEMLIMIT=150MiB` to the start command
+3. **First upstream PR**: `DOLT_NODE_CACHE_SIZE` env var (follows `DOLT_COMMIT_CACHE_SIZE` precedent exactly)
+4. **Second upstream PR**: YAML config option for pprof-server enablement
+5. **Extend membench**: Multi-database test with full Gas Town schema to validate cache size impact
+6. **Profile with pprof**: Once enabled, capture heap profiles under Gas Town load to confirm prolly cache dominance
+7. **Longer term**: Propose `automemlimit` import or `--max-go-memory` flag for container-aware memory management
