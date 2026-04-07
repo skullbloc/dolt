@@ -34,7 +34,7 @@ const (
 
 // Budget holds computed byte sizes for Dolt's major caches.
 type Budget struct {
-	NodeCache     int
+	NodeCache     uint64
 	Memtable      uint64
 	DecodedChunks uint64
 }
@@ -60,16 +60,22 @@ func compute() Budget {
 	}
 
 	// Reserve 25% for GC heap, goroutine stacks, and working memory.
+	// The remaining 75% is partitioned across caches. These ratios are
+	// heuristic defaults based on typical mixed OLTP workloads where
+	// reads dominate. The node cache gets the largest share because it
+	// serves every row lookup; the memtable gets the next largest as
+	// the primary write buffer controlling flush frequency.
 	usable := float64(limit) * 0.75
 
 	b := Budget{
-		NodeCache:     int(usable * 0.50),     // 50% — dominant read cache
-		Memtable:      uint64(usable * 0.30),  // 30% — write buffer
-		DecodedChunks: uint64(usable * 0.10),  // 10% — decoded value cache
+		NodeCache:     uint64(usable * 0.50),  // 50% — dominant read cache
+		Memtable:      uint64(usable * 0.30), // 30% — write buffer
+		DecodedChunks: uint64(usable * 0.10), // 10% — decoded value cache
 		// remaining 10% of usable = headroom within the 75%
 	}
 
-	// Clamp to minimums.
+	// Clamp to minimums so pathologically small GOMEMLIMIT values
+	// don't produce degenerate caches that thrash constantly.
 	if b.NodeCache < minNodeCacheSize {
 		b.NodeCache = minNodeCacheSize
 	}
@@ -80,30 +86,19 @@ func compute() Budget {
 		b.DecodedChunks = minDecodedChunksSize
 	}
 
-	// Don't exceed defaults — no benefit to larger caches than current behavior.
-	if b.NodeCache > DefaultNodeCacheSize {
-		b.NodeCache = DefaultNodeCacheSize
-	}
-	if b.Memtable > uint64(DefaultMemtableSize) {
-		b.Memtable = uint64(DefaultMemtableSize)
-	}
-	if b.DecodedChunks > uint64(DefaultDecodedChunksSize) {
-		b.DecodedChunks = uint64(DefaultDecodedChunksSize)
-	}
-
 	return b
 }
 
 func defaults() Budget {
 	return Budget{
 		NodeCache:     DefaultNodeCacheSize,
-		Memtable:      uint64(DefaultMemtableSize),
-		DecodedChunks: uint64(DefaultDecodedChunksSize),
+		Memtable:      DefaultMemtableSize,
+		DecodedChunks: DefaultDecodedChunksSize,
 	}
 }
 
 // NodeCacheSize returns the byte size for the prolly tree node cache.
-func NodeCacheSize() int {
+func NodeCacheSize() uint64 {
 	Init()
 	return current.NodeCache
 }

@@ -75,7 +75,7 @@ var (
 
 func getSharedCache() nodeCache {
 	sharedCacheOnce.Do(func() {
-		size := memlimit.NodeCacheSize()
+		size := int(memlimit.NodeCacheSize())
 		if size <= 0 {
 			size = defaultCacheSize
 		}

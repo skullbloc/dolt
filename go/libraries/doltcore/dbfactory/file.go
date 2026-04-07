@@ -211,7 +211,7 @@ func (fact FileFactory) CreateDbNoCache(ctx context.Context, nbf *types.NomsBinF
 		}
 		newGenSt, err = nbs.NewLocalJournalingStoreWithOptions(ctx, nbf.VersionString(), path, q, mmapArchiveIndexes, recCb, opts)
 	} else {
-		newGenSt, err = nbs.NewLocalStore(ctx, nbf.VersionString(), path, defaultMemTableSize, q, mmapArchiveIndexes)
+		newGenSt, err = nbs.NewLocalStore(ctx, nbf.VersionString(), path, getMemTableSize(), q, mmapArchiveIndexes)
 	}
 
 	if err != nil {
@@ -231,7 +231,7 @@ func (fact FileFactory) CreateDbNoCache(ctx context.Context, nbf *types.NomsBinF
 		}
 	}
 
-	oldGenSt, err := nbs.NewLocalStore(ctx, newGenSt.Version(), oldgenPath, defaultMemTableSize, q, mmapArchiveIndexes)
+	oldGenSt, err := nbs.NewLocalStore(ctx, newGenSt.Version(), oldgenPath, getMemTableSize(), q, mmapArchiveIndexes)
 	if err != nil {
 		return nil, nil, nil, err
 	}

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/memlimit"
 	"github.com/dolthub/dolt/go/libraries/utils/earl"
@@ -69,7 +70,17 @@ const (
 	defaultScheme = HTTPSScheme
 )
 
-var defaultMemTableSize = memlimit.MemtableSize()
+var (
+	memtableSizeOnce sync.Once
+	memtableSize     uint64
+)
+
+func getMemTableSize() uint64 {
+	memtableSizeOnce.Do(func() {
+		memtableSize = memlimit.MemtableSize()
+	})
+	return memtableSize
+}
 
 // DBFactory is an interface for creating concrete datas.Database instances from different backing stores
 type DBFactory interface {

@@ -48,7 +48,7 @@ func (fact GSFactory) CreateDB(ctx context.Context, nbf *types.NomsBinFormat, ur
 
 	bs := blobstore.NewGCSBlobstore(gcs, urlObj.Host, urlObj.Path)
 	q := nbs.NewUnlimitedMemQuotaProvider()
-	gcsStore, err := nbs.NewBSStore(ctx, nbf.VersionString(), bs, defaultMemTableSize, q)
+	gcsStore, err := nbs.NewBSStore(ctx, nbf.VersionString(), bs, getMemTableSize(), q)
 
 	if err != nil {
 		return nil, nil, nil, err
@@ -81,7 +81,7 @@ func (fact LocalBSFactory) CreateDB(ctx context.Context, nbf *types.NomsBinForma
 
 	bs := blobstore.NewLocalBlobstore(absPath)
 	q := nbs.NewUnlimitedMemQuotaProvider()
-	bsStore, err := nbs.NewBSStore(ctx, nbf.VersionString(), bs, defaultMemTableSize, q)
+	bsStore, err := nbs.NewBSStore(ctx, nbf.VersionString(), bs, getMemTableSize(), q)
 
 	if err != nil {
 		return nil, nil, nil, err

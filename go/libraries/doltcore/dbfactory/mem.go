@@ -42,7 +42,7 @@ func (fact MemFactory) CreateDB(ctx context.Context, nbf *types.NomsBinFormat, u
 
 	bs := blobstore.NewInMemoryBlobstore(uuid.New().String())
 	q := nbs.NewUnlimitedMemQuotaProvider()
-	cs, err := nbs.NewBSStore(ctx, nbf.VersionString(), bs, defaultMemTableSize, q)
+	cs, err := nbs.NewBSStore(ctx, nbf.VersionString(), bs, getMemTableSize(), q)
 	if err != nil {
 		return nil, nil, nil, err
 	}
