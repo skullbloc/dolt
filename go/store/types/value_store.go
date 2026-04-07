@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/dolthub/dolt/go/libraries/doltcore/memlimit"
 	"github.com/dolthub/dolt/go/store/chunks"
 	"github.com/dolthub/dolt/go/store/d"
 	"github.com/dolthub/dolt/go/store/hash"
@@ -141,7 +142,7 @@ func NewMemoryValueStore() *ValueStore {
 // ChunkStore and manages its lifetime. Calling Close on the returned
 // ValueStore will Close() cs.
 func NewValueStore(cs chunks.ChunkStore) *ValueStore {
-	return newValueStoreWithCacheAndPending(cs, defaultDecodedChunksSize, defaultPendingPutMax)
+	return newValueStoreWithCacheAndPending(cs, memlimit.DecodedChunksSize(), defaultPendingPutMax)
 }
 
 func newValueStoreWithCacheAndPending(cs chunks.ChunkStore, cacheSize, pendingMax uint64) *ValueStore {

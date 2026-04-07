@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/dolthub/dolt/go/libraries/doltcore/memlimit"
 	"github.com/dolthub/dolt/go/libraries/utils/earl"
 	"github.com/dolthub/dolt/go/store/datas"
 	"github.com/dolthub/dolt/go/store/prolly/tree"
@@ -65,9 +66,10 @@ const (
 	GitHTTPSScheme = "git+https"
 	GitSSHScheme   = "git+ssh"
 
-	defaultScheme       = HTTPSScheme
-	defaultMemTableSize = 256 * 1024 * 1024
+	defaultScheme = HTTPSScheme
 )
+
+var defaultMemTableSize = memlimit.MemtableSize()
 
 // DBFactory is an interface for creating concrete datas.Database instances from different backing stores
 type DBFactory interface {

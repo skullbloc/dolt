@@ -19,6 +19,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/dolthub/dolt/go/libraries/doltcore/memlimit"
 	"github.com/dolthub/dolt/go/store/chunks"
 	"github.com/dolthub/dolt/go/store/hash"
 	"github.com/dolthub/dolt/go/store/pool"
@@ -27,9 +28,7 @@ import (
 	"github.com/dolthub/dolt/go/store/val"
 )
 
-const (
-	cacheSize = 256 * 1024 * 1024
-)
+const defaultCacheSize = 256 * 1024 * 1024
 
 // NodeStore reads and writes prolly tree Nodes.
 type NodeStore interface {
@@ -69,7 +68,21 @@ type nodeStore struct {
 
 var _ NodeStore = &nodeStore{}
 
-var sharedCache = newChunkCache(cacheSize)
+var (
+	sharedCacheOnce sync.Once
+	sharedCache     nodeCache
+)
+
+func getSharedCache() nodeCache {
+	sharedCacheOnce.Do(func() {
+		size := memlimit.NodeCacheSize()
+		if size <= 0 {
+			size = defaultCacheSize
+		}
+		sharedCache = newChunkCache(size)
+	})
+	return sharedCache
+}
 
 var sharedPool = pool.NewBuffPool()
 
@@ -83,7 +96,7 @@ var blobBuilderPool = sync.Pool{
 func NewNodeStore(cs chunks.ChunkStore) NodeStore {
 	return &nodeStore{
 		store: cs,
-		cache: sharedCache,
+		cache: getSharedCache(),
 		bp:    sharedPool,
 		bbp:   &blobBuilderPool,
 	}
