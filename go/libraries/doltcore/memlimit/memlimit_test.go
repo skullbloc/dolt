@@ -103,10 +103,18 @@ func TestComputeVerySmall(t *testing.T) {
 
 	b := compute()
 
-	// Should hit minimums for node cache
+	// usable = 24 MiB. Node = 12 MiB (below 16 MiB min → clamped).
+	// Memtable = 7.2 MiB (above 4 MiB min). Decoded = 2.4 MiB (below 4 MiB min → clamped).
 	assert.Equal(t, uint64(minNodeCacheSize), b.NodeCache)
 	assert.GreaterOrEqual(t, b.Memtable, uint64(minMemtableSize))
-	assert.GreaterOrEqual(t, b.DecodedChunks, uint64(minDecodedChunksSize))
+	assert.Equal(t, uint64(minDecodedChunksSize), b.DecodedChunks)
+
+	// When minimums dominate, total cache budget may exceed the usable
+	// portion of GOMEMLIMIT. This is by design — the minimums exist to
+	// prevent pathologically small caches that thrash constantly. Users
+	// setting GOMEMLIMIT this low should expect pressure.
+	total := int64(b.NodeCache) + int64(b.Memtable) + int64(b.DecodedChunks)
+	assert.Greater(t, total, int64(0))
 }
 
 func TestComputeLarge(t *testing.T) {

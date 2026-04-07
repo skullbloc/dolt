@@ -68,7 +68,7 @@ func compute() Budget {
 	usable := float64(limit) * 0.75
 
 	b := Budget{
-		NodeCache:     uint64(usable * 0.50),  // 50% — dominant read cache
+		NodeCache:     uint64(usable * 0.50), // 50% — dominant read cache
 		Memtable:      uint64(usable * 0.30), // 30% — write buffer
 		DecodedChunks: uint64(usable * 0.10), // 10% — decoded value cache
 		// remaining 10% of usable = headroom within the 75%

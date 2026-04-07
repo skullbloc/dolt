@@ -75,6 +75,8 @@ var (
 
 func getSharedCache() nodeCache {
 	sharedCacheOnce.Do(func() {
+		// int() conversion is safe: Dolt targets 64-bit only.
+		// newChunkCache and stripe internals use int for sizes.
 		size := int(memlimit.NodeCacheSize())
 		if size <= 0 {
 			size = defaultCacheSize
